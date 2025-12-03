@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Canvas 泡泡螢幕保護程式</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        color: #fff;
+      }
+
+      #bubblesCanvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="bubblesCanvas"></canvas>
+
+    <script>
+      (function () {
+        const canvas = document.getElementById("bubblesCanvas");
+        const ctx = canvas.getContext("2d");
+
+        let viewWidth = window.innerWidth;
+        let viewHeight = window.innerHeight;
+
+        // 泡泡本身的物理與外觀設定
+        const bubbleConfig = {
+          bubbleCount: 30, // 最多同時存在的泡泡數量
+          minRadius: 30,
+          maxRadius: 80,
+          minSpeed: 100, // px / s
+          maxSpeed: 360, // px / s
+          restitution: 0.98, // 反彈係數，接近 1 比較像硬碰撞
+          alpha: 0.7, // 全域透明度基準
+        };
+
+        // 動畫節奏與手感相關設定
+        const animationConfig = {
+          emitInterval: 0.5, // 發射頻率（秒）
+          lifeTime: 30, // 每顆泡泡存活多久開始淡出（秒）
+          fadeTime: 1, // 淡出持續時間（秒）
+          collisionDelay: 1.5, // 剛產生的前幾秒不參與泡泡間碰撞
+        };
+
+        let bubbles = [];
+        let lastTime = performance.now();
+        let emitTimer = 0;
+        let bubbleImage = null; // 如需使用 PNG 泡泡，可在此以程式指定 Image 物件
+
+        function resizeCanvas() {
+          const dpr = window.devicePixelRatio || 1;
+          viewWidth = window.innerWidth;
+          viewHeight = window.innerHeight;
+
+          canvas.style.width = viewWidth + "px";
+          canvas.style.height = viewHeight + "px";
+
+          canvas.width = viewWidth * dpr;
+          canvas.height = viewHeight * dpr;
+
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+          // 視窗大小改變時，清空泡泡，由發射器重新補滿
+          bubbles = [];
+          emitTimer = 0;
+        }
+
+        window.addEventListener("resize", resizeCanvas);
+
+        function randRange(min, max) {
+          return min + Math.random() * (max - min);
+        }
+
+        function createRandomBubble() {
+          const r = randRange(bubbleConfig.minRadius, bubbleConfig.maxRadius);
+
+          // 從左下角發射：位置靠近左下角，往右上角隨機角度
+          const padding = 6;
+          const x = r + padding;
+          const y = viewHeight - r - padding;
+
+          const speed = randRange(bubbleConfig.minSpeed, bubbleConfig.maxSpeed);
+          // 角度介於 -90° 到 0°（向右上方）
+          const angle = randRange(-Math.PI / 2, 0);
+          const vx = Math.cos(angle) * speed;
+          const vy = Math.sin(angle) * speed;
+
+          return {
+            x,
+            y,
+            vx,
+            vy,
+            r,
+            age: 0,
+            fade: 0,
+            dying: false,
+            alpha: 1,
+          };
+        }
+
+        function update(dt) {
+          const restitution = bubbleConfig.restitution;
+
+          // 位置更新 + 與畫面邊界的反彈 + 壽命 / 淡出
+          for (const b of bubbles) {
+            b.age += dt;
+
+            b.x += b.vx * dt;
+            b.y += b.vy * dt;
+
+            if (!b.dying) {
+              // 左右邊界碰撞
+              if (b.x - b.r < 0) {
+                b.x = b.r;
+                b.vx = Math.abs(b.vx) * restitution;
+              } else if (b.x + b.r > viewWidth) {
+                b.x = viewWidth - b.r;
+                b.vx = -Math.abs(b.vx) * restitution;
+              }
+
+              // 上下邊界碰撞
+              if (b.y - b.r < 0) {
+                b.y = b.r;
+                b.vy = Math.abs(b.vy) * restitution;
+              } else if (b.y + b.r > viewHeight) {
+                b.y = viewHeight - b.r;
+                b.vy = -Math.abs(b.vy) * restitution;
+              }
+            }
+
+            // 達到壽命後開始進入淡出狀態
+            if (!b.dying && b.age >= animationConfig.lifeTime) {
+              b.dying = true;
+              b.fade = 0;
+            }
+
+            if (b.dying) {
+              b.fade += dt;
+              const t = Math.min(b.fade / animationConfig.fadeTime, 1);
+              b.alpha = 1 - t;
+            } else {
+              b.alpha = 1;
+            }
+          }
+
+          // 泡泡之間的碰撞：只處理已經存在超過 collisionDelay 秒、且未進入淡出狀態的泡泡
+          const len = bubbles.length;
+          const collisionDelay = animationConfig.collisionDelay;
+          for (let i = 0; i < len; i++) {
+            const b1 = bubbles[i];
+            if (!b1 || b1.dying || b1.age < collisionDelay) continue;
+
+            for (let j = i + 1; j < len; j++) {
+              const b2 = bubbles[j];
+              if (!b2 || b2.dying || b2.age < collisionDelay) continue;
+
+              const dx = b2.x - b1.x;
+              const dy = b2.y - b1.y;
+              const minDist = b1.r + b2.r;
+              const distSq = dx * dx + dy * dy;
+
+              if (distSq >= minDist * minDist) continue;
+
+              const dist = Math.sqrt(distSq) || 0.0001;
+              const nx = dx / dist;
+              const ny = dy / dist;
+
+              // 位置校正：把重疊的兩顆泡泡分開
+              const overlap = minDist - dist;
+              const totalR = (b1.r + b2.r) || 1;
+              const ratio1 = b2.r / totalR; // 大顆位移比較少
+              const ratio2 = b1.r / totalR;
+
+              b1.x -= nx * overlap * ratio1;
+              b1.y -= ny * overlap * ratio1;
+              b2.x += nx * overlap * ratio2;
+              b2.y += ny * overlap * ratio2;
+
+              // 速度調整：沿著法線方向做彈性碰撞
+              const vxRel = b2.vx - b1.vx;
+              const vyRel = b2.vy - b1.vy;
+              const vn = vxRel * nx + vyRel * ny; // 相對速度投影在法線上的分量
+
+              // 如果已經在分離就不用處理
+              if (vn > 0) continue;
+
+              // 簡化為等質量的 1D 彈性碰撞
+              const impulse = (-(1 + restitution) * vn) / 2;
+
+              b1.vx -= impulse * nx;
+              b1.vy -= impulse * ny;
+              b2.vx += impulse * nx;
+              b2.vy += impulse * ny;
+            }
+          }
+
+          // 移除已經完全淡出的泡泡
+          bubbles = bubbles.filter(
+            (b) => !b.dying || b.fade < animationConfig.fadeTime
+          );
+        }
+
+        function drawBubble(b) {
+          const { x, y, r } = b;
+          const bubbleAlpha = typeof b.alpha === "number" ? b.alpha : 1;
+          const alpha = bubbleConfig.alpha * bubbleAlpha;
+
+          if (bubbleImage) {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.clip();
+
+            const size = r * 2;
+            ctx.drawImage(bubbleImage, x - r, y - r, size, size);
+
+            ctx.restore();
+          } else {
+            const grad = ctx.createRadialGradient(
+              x - r * 0.3,
+              y - r * 0.3,
+              r * 0.1,
+              x,
+              y,
+              r
+            );
+            grad.addColorStop(0, "rgba(255,255,255," + alpha + ")");
+            grad.addColorStop(0.3, "rgba(173,216,230," + alpha + ")");
+            grad.addColorStop(1, "rgba(30,144,255," + alpha * 0.4 + ")");
+
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = "rgba(255,255,255," + alpha + ")";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+        }
+
+        function draw() {
+          ctx.clearRect(0, 0, viewWidth, viewHeight);
+          for (const b of bubbles) {
+            drawBubble(b);
+          }
+        }
+
+        function loop(timestamp) {
+          const dtMs = timestamp - lastTime;
+          lastTime = timestamp;
+          let dt = dtMs / 1000;
+
+          // tab 切回來時避免一次跳太遠
+          if (dt > 0.05) dt = 0.05;
+
+          // 發射器：每 emitInterval 秒新增一顆泡泡，直到達到最大數量
+          emitTimer += dt;
+          while (emitTimer >= animationConfig.emitInterval) {
+            emitTimer -= animationConfig.emitInterval;
+            if (bubbles.length < bubbleConfig.bubbleCount) {
+              bubbles.push(createRandomBubble());
+            }
+          }
+
+          update(dt);
+          draw();
+          requestAnimationFrame(loop);
+        }
+
+        // 初始化並啟動
+        resizeCanvas();
+        lastTime = performance.now();
+        requestAnimationFrame(loop);
+      })();
+    </script>
+  </body>
+</html>
