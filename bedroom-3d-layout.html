@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <title>房間 3D 實景模型屋 - Three.js</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #111;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      border-radius: 6px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    #info strong {
+      color: #ffd66b;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+
+  <!-- Import map: 告訴瀏覽器 "three" 這個模組要到哪裡載入 -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.164.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.164.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="info">
+    <div><strong>滑鼠操作：</strong>左鍵旋轉、右鍵平移、滾輪縮放視角。</div>
+    <div>顏色說明：紅棕色 = 大床棉被、藍色圖案 = 小床棉被、木紋 = 地板 / 衣櫃 / 床架、淺色 = 牆面與窗台。</div>
+    <div>比例為推估值，盡量貼近照片實景，作為模型屋 3D 示意。</div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+    // === 推估尺寸（單位：公尺） ===
+    const ROOM_W = 4.8;   // 房間寬 (左右)
+    const ROOM_D = 4.2;   // 房間深 (前後)
+    const ROOM_H = 2.7;   // 房間高度
+
+    const BIG_BED_W = 1.8;   // 大床寬 (左右，約 6 尺)
+    const BIG_BED_D = 1.9;   // 大床長
+
+    const SMALL_BED_W = 1.4;  // 小床寬 (左右)
+    const SMALL_BED_D = 1.8;  // 小床長
+
+    const CABINET_W = 0.7;   // 置物櫃寬 (沿牆)
+    const CABINET_D = 0.55;  // 置物櫃深 (往房間內)
+    const CABINET_H = 2.1;   // 置物櫃高
+
+    const WARDROBE_W = 0.8;  // 三開滑軌衣櫃寬 (沿牆)
+    const WARDROBE_D = 2.4;  // 三開滑軌衣櫃深 (往房間內)
+    const WARDROBE_H = 2.35; // 三開滑軌衣櫃高
+
+    let scene, camera, renderer, controls;
+
+    init();
+    animate();
+
+    function init() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xf0f0f0);
+
+      // 相機：從門口角落往窗戶看
+      camera = new THREE.PerspectiveCamera(
+        50,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        100
+      );
+      camera.position.set(4.5, 3.0, 4.5);
+      camera.lookAt(0, 0.9, 0);
+
+      // Renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      document.body.appendChild(renderer.domElement);
+
+      // 控制器
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 0.9, 0);
+      controls.update();
+
+      // 燈光
+      const hemi = new THREE.HemisphereLight(0xffffff, 0xb0b0b0, 0.7);
+      scene.add(hemi);
+
+      const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+      dir.position.set(5, 6, 4);
+      dir.castShadow = true;
+      dir.shadow.mapSize.set(2048, 2048);
+      dir.shadow.camera.left = -6;
+      dir.shadow.camera.right = 6;
+      dir.shadow.camera.top = 6;
+      dir.shadow.camera.bottom = -6;
+      scene.add(dir);
+
+      // 紋理載入器
+      const texLoader = new THREE.TextureLoader();
+      const floorTex = texLoader.load('https://threejs.org/examples/textures/hardwood2_diffuse.jpg');
+      floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+      floorTex.repeat.set(2, 3);
+
+      const wallTex = texLoader.load('https://threejs.org/examples/textures/brick_diffuse.jpg');
+      wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
+      wallTex.repeat.set(3, 2);
+
+      const wardrobeTex = texLoader.load('https://threejs.org/examples/textures/hardwood2_diffuse.jpg');
+      wardrobeTex.wrapS = wardrobeTex.wrapT = THREE.RepeatWrapping;
+      wardrobeTex.repeat.set(1, 1.8);
+
+      const bedspreadBigTex = texLoader.load('https://threejs.org/examples/textures/uv_grid_opengl.jpg');
+      bedspreadBigTex.wrapS = bedspreadBigTex.wrapT = THREE.RepeatWrapping;
+      bedspreadBigTex.repeat.set(2, 2);
+
+      const bedspreadSmallTex = texLoader.load('https://threejs.org/examples/textures/planets/jupiter.jpg');
+      bedspreadSmallTex.wrapS = bedspreadSmallTex.wrapT = THREE.RepeatWrapping;
+      bedspreadSmallTex.repeat.set(2, 2);
+
+      const playmatTex = texLoader.load('https://threejs.org/examples/textures/checker.png');
+      playmatTex.wrapS = playmatTex.wrapT = THREE.RepeatWrapping;
+      playmatTex.repeat.set(4, 4);
+
+      // 地板（木紋）
+      const floorGeo = new THREE.PlaneGeometry(ROOM_W, ROOM_D);
+      const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.8 });
+      const floor = new THREE.Mesh(floorGeo, floorMat);
+      floor.rotation.x = -Math.PI / 2;
+      floor.receiveShadow = true;
+      scene.add(floor);
+
+      // 房間牆體：改用四面牆 + 開頂模型屋，保留前側視角開口
+      const wallMat = new THREE.MeshStandardMaterial({
+        color: 0xf5f5f5,
+        roughness: 0.9
+      });
+
+      // 後牆 (有窗戶那一面)
+      const backWallGeo = new THREE.PlaneGeometry(ROOM_W, ROOM_H);
+      const backWall = new THREE.Mesh(backWallGeo, wallMat);
+      backWall.position.set(0, ROOM_H / 2, -ROOM_D / 2);
+      backWall.receiveShadow = true;
+      scene.add(backWall);
+
+      // 左牆
+      const leftWallGeo = new THREE.PlaneGeometry(ROOM_D, ROOM_H);
+      const leftWall = new THREE.Mesh(leftWallGeo, wallMat);
+      leftWall.rotation.y = Math.PI / 2;
+      leftWall.position.set(-ROOM_W / 2, ROOM_H / 2, 0);
+      leftWall.receiveShadow = true;
+      scene.add(leftWall);
+
+      // 右牆
+      const rightWallGeo = new THREE.PlaneGeometry(ROOM_D, ROOM_H);
+      const rightWall = new THREE.Mesh(rightWallGeo, wallMat);
+      rightWall.rotation.y = -Math.PI / 2;
+      rightWall.position.set(ROOM_W / 2, ROOM_H / 2, 0);
+      rightWall.receiveShadow = true;
+      scene.add(rightWall);
+
+      // 前牆 (床尾所在那一面牆，預留給衣櫃與置物櫃)
+      const frontWallGeo = new THREE.PlaneGeometry(ROOM_W, ROOM_H);
+      const frontWall = new THREE.Mesh(frontWallGeo, wallMat);
+      frontWall.rotation.y = Math.PI;
+      frontWall.position.set(0, ROOM_H / 2, ROOM_D / 2);
+      frontWall.receiveShadow = true;
+      scene.add(frontWall);
+
+      // 窗戶：改成小床右側牆面上的淡藍色窗戶
+      const windowWidth = ROOM_W * 0.8;
+      const windowHeight = 1.2;
+      const windowY = 1.4;
+      const windowDepth = 0.02;
+
+      const windowGeo = new THREE.PlaneGeometry(windowWidth, windowHeight);
+      const windowMat = new THREE.MeshPhongMaterial({
+        color: 0x87c5ff,
+        transparent: true,
+        opacity: 0.7
+      });
+      const win = new THREE.Mesh(windowGeo, windowMat);
+      // 右牆 (X 正方向) 上的窗戶，朝房間內側
+      win.rotation.y = -Math.PI / 2;
+      const windowZ = -ROOM_D / 2 + SMALL_BED_D * 1.2; // 大約對齊小床位置
+      win.position.set(ROOM_W / 2 - windowDepth, windowY, windowZ);
+      scene.add(win);
+
+      // === 家具 ===
+      const bedHeight = 0.55; // 床整體高度
+
+      // 大床：兩張床一起緊靠在窗戶對面的牆（左側牆）
+      const bigBed = createBed(BIG_BED_W, bedHeight, BIG_BED_D, {
+        frameColor: 0xb58b5a,
+        mattressColor: 0xffffff,
+        spreadMap: bedspreadBigTex
+      });
+      const bigBedZ = -ROOM_D / 2 + BIG_BED_D / 2 + 0.05;
+      const bigBedX = -ROOM_W / 2 + BIG_BED_W / 2 + 0.05; // 貼近左側牆
+      bigBed.position.set(bigBedX, bedHeight / 2, bigBedZ);
+      scene.add(bigBed);
+      attachLabel(bigBed, '大床');
+
+      // 小床：仍接在大床右側，但整組床貼近左側牆
+      const smallBed = createBed(SMALL_BED_W, bedHeight * 0.9, SMALL_BED_D, {
+        frameColor: 0x8b6f4b,
+        mattressColor: 0xffffff,
+        spreadMap: bedspreadSmallTex
+      });
+      const smallBedX = bigBedX + (BIG_BED_W + SMALL_BED_W) / 2 + 0.02;
+      const smallBedZ = -ROOM_D / 2 + SMALL_BED_D / 2 + 0.02;
+      smallBed.position.set(smallBedX, bedHeight * 0.9 / 2, smallBedZ);
+      scene.add(smallBed);
+      attachLabel(smallBed, '小床');
+
+      // 床前地墊 (拼接泡棉墊示意)
+      const matGeo = new RoundedBoxGeometry(1.6, 0.03, 1.2, 4, 0.03);
+      const matMat = new THREE.MeshStandardMaterial({ map: playmatTex, roughness: 0.9 });
+      const playMat = new THREE.Mesh(matGeo, matMat);
+      const matZ = bigBedZ + BIG_BED_D / 2 + 0.65;
+      playMat.position.set(0.4, 0.03 / 2, matZ);
+      playMat.castShadow = true;
+      playMat.receiveShadow = true;
+      scene.add(playMat);
+
+      // 床尾牆：置物櫃 + 三開滑軌衣櫃
+      // 置物櫃靠床尾牆偏左側
+      const cabinetZ = ROOM_D / 2 - CABINET_D / 2 - 0.02;
+      const cabinetX = -ROOM_W / 2 + CABINET_W / 2 + 0.2;
+      const cabinetBody = createWardrobeLikeBox(CABINET_W, CABINET_H, CABINET_D, 0xefe0c8);
+      cabinetBody.position.set(cabinetX, CABINET_H / 2, cabinetZ);
+      scene.add(cabinetBody);
+      attachLabel(cabinetBody, '置物櫃');
+
+      // 三開滑軌衣櫃：改成沿下方牆水平放置，並緊靠置物櫃右側
+      const wardrobeLen = WARDROBE_D;   // 沿牆的長度
+      const wardrobeDepth = WARDROBE_W; // 往房間內的深度
+      const wardrobeZ = cabinetZ;       // 與置物櫃同一面牆
+      const wardrobeX = cabinetX + (CABINET_W + wardrobeLen) / 2; // 緊貼置物櫃右側
+      const wardrobe = createWardrobe(wardrobeLen, WARDROBE_H, wardrobeDepth, wardrobeTex);
+      wardrobe.position.set(wardrobeX, WARDROBE_H / 2, wardrobeZ);
+      scene.add(wardrobe);
+      attachLabel(wardrobe, '三開滑軌衣櫃');
+
+      // 網格輔助 (可當成施工線)
+      const grid = new THREE.GridHelper(6, 12, 0x000000, 0x000000);
+      grid.rotation.y = Math.PI / 2;
+      grid.position.y = 0.001;
+      grid.material.opacity = 0.12;
+      grid.material.transparent = true;
+      scene.add(grid);
+
+      window.addEventListener('resize', onWindowResize);
+    }
+
+    function createBed(w, h, d, options) {
+      const { frameColor, mattressColor, spreadMap } = options;
+      const group = new THREE.Group();
+
+      const frameHeight = h * 0.35;
+      const mattressHeight = h * 0.65;
+
+      // 床架 (木紋)
+      const frameGeo = new RoundedBoxGeometry(w, frameHeight, d, 4, 0.06);
+      const frameMat = new THREE.MeshStandardMaterial({ color: frameColor, roughness: 0.8, metalness: 0.05 });
+      const frame = new THREE.Mesh(frameGeo, frameMat);
+      frame.castShadow = true;
+      frame.receiveShadow = true;
+      frame.position.y = frameHeight / 2;
+      group.add(frame);
+
+      // 床墊
+      const mattressGeo = new RoundedBoxGeometry(w * 0.98, mattressHeight * 0.9, d * 0.98, 5, 0.08);
+      const mattressMat = new THREE.MeshStandardMaterial({ color: mattressColor, roughness: 0.7 });
+      const mattress = new THREE.Mesh(mattressGeo, mattressMat);
+      mattress.castShadow = true;
+      mattress.receiveShadow = true;
+      mattress.position.y = frameHeight + mattressHeight / 2;
+      group.add(mattress);
+
+      // 棉被 / 床罩 (稍微蓋住床墊頂部)
+      const spreadGeo = new RoundedBoxGeometry(w * 0.99, mattressHeight * 0.45, d * 0.99, 5, 0.07);
+      const spreadMat = new THREE.MeshStandardMaterial({ map: spreadMap, roughness: 0.9 });
+      const spread = new THREE.Mesh(spreadGeo, spreadMat);
+      spread.castShadow = true;
+      spread.receiveShadow = true;
+      spread.position.y = frameHeight + mattressHeight - (spreadGeo.parameters.height / 2) + 0.01;
+      group.add(spread);
+
+      // 枕頭 (兩顆)
+      const pillowGeo = new RoundedBoxGeometry(w * 0.22, mattressHeight * 0.3, d * 0.25, 5, 0.04);
+      const pillowMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.7 });
+      const pillow1 = new THREE.Mesh(pillowGeo, pillowMat);
+      const pillow2 = pillow1.clone();
+      const pillowY = frameHeight + mattressHeight + (pillowGeo.parameters.height / 2) * 0.1;
+      pillow1.position.set(-w * 0.22, pillowY, -d * 0.35);
+      pillow2.position.set(w * 0.22, pillowY, -d * 0.35);
+      pillow1.castShadow = pillow2.castShadow = true;
+      pillow1.receiveShadow = pillow2.receiveShadow = true;
+      group.add(pillow1);
+      group.add(pillow2);
+
+      // 簡單床頭板 (靠窗那一側)
+      const headboardThickness = 0.05;
+      const headboardHeight = h * 1.2;
+      const headboardGeo = new THREE.BoxGeometry(w * 1.02, headboardHeight, headboardThickness);
+      const headboardMat = new THREE.MeshStandardMaterial({ color: 0xd3b48a, roughness: 0.7 });
+      const headboard = new THREE.Mesh(headboardGeo, headboardMat);
+      headboard.castShadow = true;
+      headboard.receiveShadow = true;
+      headboard.position.set(0, headboardHeight / 2, -d / 2 + headboardThickness / 2);
+      group.add(headboard);
+
+      return group;
+    }
+
+    function createWardrobeLikeBox(w, h, d, color) {
+      const group = new THREE.Group();
+
+      // 主體箱體
+      const bodyGeo = new THREE.BoxGeometry(w, h, d);
+      const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.8 });
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.castShadow = true;
+      body.receiveShadow = true;
+      group.add(body);
+
+      // 門板線條（與三開滑軌衣櫃一致：放在面向房間的 -Z 方向）
+      const doorPlaneGeo = new THREE.PlaneGeometry(w * 0.96, h * 0.96);
+      const doorPlaneMat = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.35
+      });
+      const doorPlane = new THREE.Mesh(doorPlaneGeo, doorPlaneMat);
+      doorPlane.position.set(0, 0, -d / 2 - 0.001);
+      doorPlane.rotation.y = Math.PI; // 把平面正面轉向房間內側
+      group.add(doorPlane);
+
+      // 門把（黑色直條，風格與滑軌衣櫃相同，但略短一點）
+      const handleGeo = new THREE.BoxGeometry(0.03, h * 0.3, 0.03);
+      const handleMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.3, roughness: 0.4 });
+      const handle1 = new THREE.Mesh(handleGeo, handleMat);
+      const handle2 = handle1.clone();
+      handle1.position.set(-w * 0.18, 0.0, -d / 2 - 0.04);
+      handle2.position.set( w * 0.18, 0.0, -d / 2 - 0.04);
+      handle1.castShadow = handle2.castShadow = true;
+      handle1.receiveShadow = handle2.receiveShadow = true;
+      group.add(handle1);
+      group.add(handle2);
+
+      return group;
+    }
+
+    function createWardrobe(w, h, d, woodTex) {
+      const group = new THREE.Group();
+
+      // 主體：沿牆方向 w、深度 d
+      const bodyGeo = new THREE.BoxGeometry(w, h, d);
+      const bodyMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.7 });
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.castShadow = true;
+      body.receiveShadow = true;
+      group.add(body);
+
+      // 三片門的凹槽線（改在面向房間的 -Z 方向）
+      const doorPlaneGeo = new THREE.PlaneGeometry(w * 0.96, h * 0.96);
+      const doorPlaneMat = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.35
+      });
+      const doorPlane = new THREE.Mesh(doorPlaneGeo, doorPlaneMat);
+      // 放在 -Z 面，讓門朝房間內側
+      doorPlane.position.set(0, 0, -d / 2 - 0.001);
+      // 由於平面預設正面朝 +Z，旋轉 180° 讓線條朝內
+      doorPlane.rotation.y = Math.PI;
+      group.add(doorPlane);
+
+      // 門把（黑色直條，放在面向房間的側面）
+      const handleGeo = new THREE.BoxGeometry(0.03, h * 0.4, 0.03);
+      const handleMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.3, roughness: 0.4 });
+      const handle1 = new THREE.Mesh(handleGeo, handleMat);
+      const handle2 = handle1.clone();
+      handle1.position.set(-w * 0.15, 0.0, -d / 2 - 0.04);
+      handle2.position.set( w * 0.15, 0.0, -d / 2 - 0.04);
+      handle1.castShadow = handle2.castShadow = true;
+      handle1.receiveShadow = handle2.receiveShadow = true;
+      group.add(handle1);
+      group.add(handle2);
+
+      return group;
+    }
+
+    function attachLabel(object3D, text) {
+      const sprite = createTextSprite(text);
+      // 估算物件高度
+      const box = new THREE.Box3().setFromObject(object3D);
+      const height = box.max.y - box.min.y;
+      sprite.position.set(0, height + 0.2, 0);
+      object3D.add(sprite);
+    }
+
+    function createTextSprite(message) {
+      const canvas = document.createElement('canvas');
+      const size = 256;
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+
+      ctx.clearRect(0, 0, size, size);
+      ctx.fillStyle = 'rgba(255,255,255,0.0)';
+      ctx.fillRect(0, 0, size, size);
+      ctx.font = '48px "Microsoft JhengHei", sans-serif';
+      ctx.fillStyle = '#111';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(message, size / 2, size / 2);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+      const sprite = new THREE.Sprite(material);
+      sprite.scale.set(1.4, 1.4, 1.4);
+      return sprite;
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
